@@ -1,0 +1,33 @@
+{
+  "name": "map-gen",
+  "version": "0.1.0",
+  "description": "Generate country SVGs from Natural Earth data",
+  "bin": {
+    "map-gen": "src/gen-maps.mjs",
+    "map-fetch": "src/fetch-data.mjs",
+    "map-search": "src/search.mjs"
+  },
+  "files": [
+    "src/gen-maps.mjs",
+    "src/fetch-data.mjs",
+    "src/search.mjs",
+    "src/jsonc.mjs",
+    "src/naturalearth.mjs",
+    "src/maps.example.jsonc",
+    "README.md"
+  ],
+  "scripts": {
+    "fetch": "node src/fetch-data.mjs",
+    "gen": "node src/gen-maps.mjs",
+    "search": "node src/search.mjs"
+  },
+  "dependencies": {
+    "mapshaper": "^0.7.67"
+  },
+  "overrides": {
+    "adm-zip": "^0.6.1",
+    "fflate": "^0.8.3",
+    "file-type": "^22.1.1",
+    "image-size": "^2.0.4"
+  }
+}
