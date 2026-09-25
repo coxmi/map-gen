@@ -56,13 +56,6 @@ function getBounds(geojson) {
     return box
 }
 
-// a part is excluded when it sits entirely within the named place. the test
-// is a bounding box, which is only exact for convex places like island groups
-function isInside(place, box) {
-    return box.west >= place.west && box.east <= place.east &&
-        box.south >= place.south && box.north <= place.north
-}
-
 // names come from the dataset, so a typo should say what is actually available
 function unknownPlace(key, places) {
     const near = [...places.names.keys()].filter(name =>
@@ -96,9 +89,9 @@ function indexPlaces(features) {
 
     for (const feature of features) {
         const { name, iso_3166_2, type_en } = feature.properties
-        const box = growBox(emptyBox(), feature.geometry.coordinates)
-        names.set(name, (names.get(name) ?? []).concat({ box, code: iso_3166_2, type: type_en }))
-        if (iso_3166_2) codes.set(iso_3166_2, (codes.get(iso_3166_2) ?? []).concat(box))
+        const place = { code: iso_3166_2, type: type_en, feature }
+        names.set(name, (names.get(name) ?? []).concat(place))
+        if (iso_3166_2) codes.set(iso_3166_2, (codes.get(iso_3166_2) ?? []).concat(place))
     }
 
     return { names, codes }
@@ -123,11 +116,9 @@ function findPlaces(key, places) {
     const matches = places.names.get(key)
     if (!matches) throw new Error(unknownPlace(key, places))
     if (matches.length > 1) throw new Error(ambiguousPlace(key, matches))
-    return [matches[0].box]
+    return [matches[0]]
 }
 
-// a country arrives as a single multipolygon feature, split it so individual
-// parts can be dropped by name
 function explode(feature) {
     if (feature.geometry.type !== 'MultiPolygon') return [feature]
     return feature.geometry.coordinates.map(coordinates => ({
@@ -136,26 +127,56 @@ function explode(feature) {
     }))
 }
 
-function selectCountries(world, { include, exclude }, places) {
+function selectCountries(world, { include, exclude = [] }, places) {
     const codes = new Set(include)
-    const bounds = exclude.flatMap(name => findPlaces(name, places))
-
     const features = world.features
         .filter(feature => codes.has(feature.properties.ISO_A2))
         .flatMap(explode)
-        .filter(feature => {
-            const box = growBox(emptyBox(), feature.geometry.coordinates)
-            return !bounds.some(place => isInside(place, box))
-        })
 
-    return { type: 'FeatureCollection', features }
+    return {
+        countries: { type: 'FeatureCollection', features },
+        exclusions: exclude.flatMap(name =>
+            findPlaces(name, places).map(match => match.feature)
+        )
+    }
 }
 
-// simplify and project in one pass, so the bounds we measure afterwards are
-// the bounds we actually draw
+function tag(feature, kind) {
+    return {
+        ...feature,
+        properties: { ...feature.properties, __mapshaper_kind: kind }
+    }
+}
+
+async function erase(countries, exclusions) {
+    if (!exclusions.length) return countries
+
+    const input = {
+        type: 'FeatureCollection',
+        features: [
+            ...countries.features.map(feature => tag(feature, 'countries')),
+            ...exclusions.map(feature => tag(feature, 'exclusions'))
+        ]
+    }
+    const result = await mapshaper.applyCommands(
+        '-i input.json -split __mapshaper_kind -erase source=exclusions target=countries -o format=geojson geojson-type=FeatureCollection target=countries erased.json',
+        { 'input.json': JSON.stringify(input) }
+    )
+    return JSON.parse(result['erased.json'])
+}
+
+// simplify before measuring geographic bounds, then project that same geometry
+async function simplifyGeojson(geojson) {
+    const result = await mapshaper.applyCommands(
+        `-i input.json -simplify ${simplify} -o format=geojson geojson-type=FeatureCollection simplified.json`,
+        { 'input.json': JSON.stringify(geojson) }
+    )
+    return JSON.parse(result['simplified.json'])
+}
+
 async function project(geojson) {
     const result = await mapshaper.applyCommands(
-        `-i input.json -simplify ${simplify} -proj ${projection} -o format=geojson projected.json`,
+        `-i input.json -proj ${projection} -o format=geojson geojson-type=FeatureCollection projected.json`,
         { 'input.json': JSON.stringify(geojson) }
     )
     return JSON.parse(result['projected.json'])
@@ -222,12 +243,17 @@ async function main() {
 
         // json config gets no syntax checking, and a code that matches no ISO_A2
         // would otherwise go on to produce an empty or broken svg
-        if (!selected.features.length) {
+        if (!selected.countries.features.length) {
             throw new Error(`${code} matched no country, check the include codes against ISO_A2`)
         }
-        const geographicBounds = getBounds(selected)
-        const projected = await project(selected)
-        const projectedBounds = getBounds(projected)
+        const countries = await erase(selected.countries, selected.exclusions)
+        const simplified = await simplifyGeojson(countries)
+        const geographicBounds = getBounds(simplified)
+        if (!Number.isFinite(geographicBounds.east)) {
+            throw new Error(`${code} matched no area after exclusions`)
+        }
+        const projected = await project(simplified)
+        const projectedBounds = getBounds(projected)        
         const size = sizeForBounds(projectedBounds)
         const svg = await renderSvg(projected, projectedBounds, size)
         const viewBox = readViewBox(svg)
