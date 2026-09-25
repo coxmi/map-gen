@@ -1,16 +1,12 @@
-// copy this file to a path of your choosing and edit that copy, then hand it
-// to the commands, e.g. npm run gen my-maps.jsonc
-//
-// one key per map, each writes output/<key>.svg and output/<key>.json
-// comments and trailing commas are both fine in this file
-
+// copy this and edit file to your liking
+// then run it through `npm run gen <file>`
 {
     "gb": {
         // ISO_A2 codes of the countries to draw
         "include": ["GB", "IE"],
 
         // admin_1 names, or iso_3166_2 codes, to cut out of the map
-        // run "npm run search <config> <keyword>" to find them
+        // run "npm run search <keyword>" to find them
         "exclude": ["Shetland Islands"]
     },
 

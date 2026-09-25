@@ -2,7 +2,6 @@
 
 import { styleText } from 'node:util'
 import { datasets, read } from './naturalearth.mjs'
-import { readConfig } from './jsonc.mjs'
 
 // hasColors only exists on a tty, so a plain pipe must not pick up escapes
 const canColour = typeof process.stdout.hasColors === 'function' && process.stdout.hasColors()
@@ -14,9 +13,8 @@ function fail(error) {
     process.exit(1)
 }
 
-// filled in by main, the helpers below have to reach them
+// filled in by main, the helpers below have to reach it
 let all = false
-let mapsUsing = new Map()
 
 // what a match is worth, so a hit on a real name outranks one that only came
 // from a country or sovereign field
@@ -50,7 +48,7 @@ function scoreColour(value) {
 }
 
 // floor widths so short results do not leave a cramped table
-const spacing = [26, 10, 26, 6, 5, 10]
+const spacing = [26, 10, 26, 5, 10]
 
 // a name starting with the keyword beats one that merely contains it
 function strength(value, needle) {
@@ -86,7 +84,7 @@ function showCode(key, properties) {
 }
 
 function findMatches(features, key, needle) {
-    const { name, country } = columns[key]
+    const { name } = columns[key]
     const matches = []
     const weak = []
 
@@ -102,13 +100,9 @@ function findMatches(features, key, needle) {
         matches.push({ feature, value, field })
     }
 
-    // a country code can be missing, so keep the tiebreak total
-    const mapsFor = feature => (mapsUsing.get(feature.properties[country]) ?? []).join()
-
     const byScore = (a, b) =>
         b.value - a.value ||
-        String(a.feature.properties[name]).localeCompare(String(b.feature.properties[name])) ||
-        mapsFor(a.feature).localeCompare(mapsFor(b.feature))
+        String(a.feature.properties[name]).localeCompare(String(b.feature.properties[name]))
 
     matches.sort(byScore)
     weak.sort(byScore)
@@ -117,17 +111,15 @@ function findMatches(features, key, needle) {
 }
 
 function report(key, matches, note = '') {
-    const { label, name, type, country } = columns[key]
+    const { label, name, type } = columns[key]
     const shown = all ? matches : matches.slice(0, limit)
     const rows = shown.map(({ feature, value, field }) => {
         const properties = feature.properties
-        const using = mapsUsing.get(properties[country])
         return {
             cells: [
                 properties[name] || '(no name)',
                 showCode(key, properties) || '-',
                 properties[type] || '-',
-                using?.join(' ') || '-',
                 value === undefined ? '-' : `${Math.round(value * 100)}%`,
                 field || '-'
             ],
@@ -135,7 +127,7 @@ function report(key, matches, note = '') {
         }
     })
 
-    const header = ['NAME', 'CODE', 'TYPE', 'MAP', 'SCORE', 'MATCHED']
+    const header = ['NAME', 'CODE', 'TYPE', 'SCORE', 'MATCHED']
     const widths = header.map((cell, i) =>
         Math.max(spacing[i], cell.length, ...rows.map(row => row.cells[i].length))
     )
@@ -158,9 +150,8 @@ function report(key, matches, note = '') {
             // the code goes straight into the exclude list, so keep it plain
             paint('white', cell(row.cells[1], 1)),
             paint('dim', cell(row.cells[2], 2)),
-            paint('dim', cell(row.cells[3], 3)),
-            paint(row.value === undefined ? 'dim' : scoreColour(row.value), cell(row.cells[4], 4)),
-            paint('dim', row.cells[5])
+            paint(row.value === undefined ? 'dim' : scoreColour(row.value), cell(row.cells[3], 3)),
+            paint('dim', row.cells[4])
         ]
         console.log(`  ${coloured.join('  ')}`)
     }
@@ -173,31 +164,16 @@ function report(key, matches, note = '') {
 async function main() {
     const args = process.argv.slice(2)
     const banged = args.filter(word => word !== '!')
-
-    // a single argument is the keyword on its own, otherwise a config comes
-    // first so the MAP column has something to match places against
-    const [configPath, ...words] = banged.length > 1 ? banged : [null, ...banged]
-    const joined = words.join(' ').trim()
+    const joined = banged.join(' ').trim()
 
     // a bang asks for everything, duckduckgo style, on the end of the term or
     // standing alone, and it comes back off the search either way
     all = args.length !== banged.length || /!$/.test(joined)
     const query = joined.replace(/!+$/, '').trim()
 
-    if (!query || (configPath ?? '').startsWith('-')) {
-        console.error('usage: map-search [<config>] <keyword>[!]')
+    if (!query) {
+        console.error('usage: map-search <keyword>[!]')
         process.exit(1)
-    }
-
-    // with no config there are simply no maps to match a place against
-    const maps = configPath ? await readConfig(configPath) : {}
-
-    // exclude only reaches places inside a country a map includes
-    mapsUsing = new Map()
-    for (const [code, config] of Object.entries(maps)) {
-        for (const country of config.include) {
-            mapsUsing.set(country, (mapsUsing.get(country) ?? []).concat(code))
-        }
     }
 
     // the count has to lead, so gather every result before printing anything
